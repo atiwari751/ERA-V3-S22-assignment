@@ -95,19 +95,21 @@ tokenizer.padding_side = "left"
 training_args = GRPOConfig(
     output_dir="phi2-grpo-openassistant",
     num_train_epochs=3,
-    per_device_train_batch_size=8,
-    gradient_accumulation_steps=4,
+    per_device_train_batch_size=2,
+    gradient_accumulation_steps=16,
     gradient_checkpointing=True,
     learning_rate=5e-6,
     logging_steps=10,
     save_steps=100,
     fp16=True,
     remove_unused_columns=False,
-    report_to="wandb",
+    report_to="none",
     optim="adamw_torch",
     lr_scheduler_type="cosine",
     warmup_ratio=0.1,
+    num_generations=2,  # Set the desired number of generations per prompt
 )
+
 
 # Initialize the GRPO trainer with preference dataset
 trainer = GRPOTrainer(
