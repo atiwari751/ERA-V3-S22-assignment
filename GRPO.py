@@ -1,15 +1,77 @@
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from trl import GRPOConfig, GRPOTrainer
 import torch
 import os
+from collections import defaultdict
 
 # Set environment variables for better logging
 os.environ["WANDB_PROJECT"] = "phi2-grpo-finetuning"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Load the OpenAssistant dataset
-dataset = load_dataset("trl-internal-testing/oasst_preference_dataset", split="train")
+raw_data = load_dataset("OpenAssistant/oasst1", split="train")
+
+# Preprocess the dataset using logic from preprocess.py
+# Group messages by conversation_id
+conversations = defaultdict(list)
+for item in raw_data:
+    conversations[item["message_tree_id"]].append(item)
+
+# Prepare preference pairs
+pairs = []
+for tree_id, msgs in conversations.items():
+    prompt = next((m for m in msgs if m["role"] == "prompter" and m["parent_id"] is None), None)
+    if not prompt:
+        continue
+    
+    # Find direct replies to the prompt
+    replies = [m for m in msgs if m["parent_id"] == prompt["message_id"]]
+    
+    # If we don't have ranking info or not enough replies, try to use other heuristics
+    if len([r for r in replies if r.get("ranking")]) < 2:
+        # If we have at least 2 replies, use them based on likes or other metrics
+        if len(replies) >= 2:
+            # Sort by likes if available, otherwise just take any two
+            if all("like_count" in r for r in replies):
+                ranked = sorted(replies, key=lambda x: x.get("like_count", 0), reverse=True)
+            else:
+                ranked = replies[:2]  # Just take the first two
+            
+            chosen = ranked[0]["text"]
+            rejected = ranked[-1]["text"]
+            
+            pairs.append({
+                "prompt": prompt["text"],
+                "chosen": chosen,
+                "rejected": rejected
+            })
+        continue
+    
+    # Original logic for replies with ranking
+    ranked = sorted(replies, key=lambda x: x["ranking"])
+    chosen = ranked[0]["text"]
+    rejected = ranked[-1]["text"]
+
+    pairs.append({
+        "prompt": prompt["text"],
+        "chosen": chosen,
+        "rejected": rejected
+    })
+
+# Convert to Hugging Face dataset format for preference learning
+preference_dataset = Dataset.from_list(pairs)
+
+print(f"Created {len(preference_dataset)} preference pairs for GRPO")
+
+# Debug: Print a sample pair if available
+if len(preference_dataset) > 0:
+    print("\nSample preference pair:")
+    print(f"Prompt: {preference_dataset[0]['prompt'][:100]}...")
+    print(f"Chosen: {preference_dataset[0]['chosen'][:100]}...")
+    print(f"Rejected: {preference_dataset[0]['rejected'][:100]}...")
+else:
+    print("WARNING: No preference pairs were created. Check the dataset structure.")
 
 # Load model and tokenizer
 model_name = "microsoft/phi-2"
@@ -20,64 +82,25 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto"
 )
 
+# Define a reward function that rewards helpful, concise responses
+# and penalizes responses similar to rejected ones
+def reward_func(completions, **kwargs):
+    return [len(c.split()) for c in completions]  # reward by word count
+
 # Configure tokenizer for chat format
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "left"
-
-# Process the dataset to create prompt-response pairs
-def preprocess_function(examples):
-    # For OpenAssistant, we need to format the conversations properly
-    # This is a simplified version - you may need to adjust based on the exact structure
-    prompts = []
-    responses = []
-    
-    for message in examples["messages"]:
-        if len(message) >= 2:  # Ensure there's at least a prompt and response
-            prompt = message[0]["content"]
-            response = message[1]["content"]
-            prompts.append(prompt)
-            responses.append(response)
-    
-    return {"prompt": prompts, "response": responses}
-
-# Process the dataset
-processed_dataset = dataset.map(
-    preprocess_function,
-    batched=True,
-    remove_columns=dataset.column_names
-)
-
-# Define a reward function that rewards helpful, concise responses
-def reward_function(responses, prompts=None, **kwargs):
-    rewards = []
-    for response in responses:
-        # Example reward criteria:
-        # 1. Length-based component (prefer responses between 100-500 chars)
-        length_score = min(1.0, max(0.0, 1.0 - abs(len(response) - 300) / 300))
-        
-        # 2. Quality heuristics (simple examples)
-        has_structure = 0.5 if any(marker in response for marker in ["First", "Second", "Finally", "In conclusion"]) else 0.0
-        is_detailed = 0.5 if len(response) > 200 else 0.0
-        
-        # Combine reward components
-        reward = length_score + has_structure + is_detailed
-        rewards.append(reward)
-    
-    return rewards
 
 # Configure GRPO training
 training_args = GRPOConfig(
     output_dir="phi2-grpo-openassistant",
     num_train_epochs=3,
-    per_device_train_batch_size=4,
+    per_device_train_batch_size=8,
     gradient_accumulation_steps=4,
     gradient_checkpointing=True,
     learning_rate=5e-6,
-    max_length=512,
     logging_steps=10,
     save_steps=100,
-    eval_steps=100,
-    evaluation_strategy="steps",
     fp16=True,
     remove_unused_columns=False,
     report_to="wandb",
@@ -86,15 +109,16 @@ training_args = GRPOConfig(
     warmup_ratio=0.1,
 )
 
-# Initialize the GRPO trainer
+# Initialize the GRPO trainer with preference dataset
 trainer = GRPOTrainer(
     model=model,
-    tokenizer=tokenizer,
     args=training_args,
-    train_dataset=processed_dataset,
-    reward_funcs=reward_function,
-    packing=False,
+    train_dataset=preference_dataset,
+    reward_funcs=reward_func,
 )
+
+# Set the tokenizer on the trainer after initialization
+trainer.tokenizer = tokenizer
 
 # Start training
 trainer.train()
