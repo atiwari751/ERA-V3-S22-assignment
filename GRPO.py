@@ -120,13 +120,14 @@ def reward_func(completions, **kwargs):
 # Configure GRPO training
 training_args = GRPOConfig(
     output_dir="phi2-grpo-qlora",
-    num_train_epochs=1,                # Reduced from 3 to 1
+    num_train_epochs=1,
     per_device_train_batch_size=2,
-    gradient_accumulation_steps=4,     # Reduced from 16 to 4
+    gradient_accumulation_steps=4,
     gradient_checkpointing=True,
     learning_rate=5e-6,
     logging_steps=10,
-    save_steps=100,
+    save_steps=10,                    # Save every 10 steps
+    save_total_limit=1,               # Keep only 1 checkpoint (overwrite previous ones)
     fp16=True,
     remove_unused_columns=False,
     report_to="none",
@@ -134,14 +135,6 @@ training_args = GRPOConfig(
     lr_scheduler_type="cosine",
     warmup_ratio=0.1,
     num_generations=2,
-    max_length=256,                    # Added to limit generation length
-    generation_kwargs={                # Added to control generation
-        "max_new_tokens": 128,
-        "pad_token_id": tokenizer.eos_token_id,
-        "do_sample": False,
-    },
-    logging_first_step=True,           # Log first step metrics
-    logging_nan_inf_filter=False,      # Show all warnings
 )
 
 # Initialize the GRPO trainer
@@ -156,7 +149,7 @@ trainer = GRPOTrainer(
 trainer.tokenizer = tokenizer
 
 # Start training
-trainer.train()
+trainer.train(resume_from_checkpoint=True)  # Resume from the latest checkpoint
 
 # Save the final model
 trainer.save_model("phi2-grpo-qlora-final")
