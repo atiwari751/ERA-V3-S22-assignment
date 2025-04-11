@@ -1,6 +1,7 @@
 from datasets import load_dataset, Dataset
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
+from peft import LoraConfig, get_peft_model
 import torch
 import os
 from collections import defaultdict
@@ -62,6 +63,10 @@ for tree_id, msgs in conversations.items():
 # Convert to Hugging Face dataset format for preference learning
 preference_dataset = Dataset.from_list(pairs)
 
+# Limit dataset size to speed up training (use first 1000 examples)
+if len(preference_dataset) > 1000:
+    preference_dataset = preference_dataset.select(range(1000))
+
 print(f"Created {len(preference_dataset)} preference pairs for GRPO")
 
 # Debug: Print a sample pair if available
@@ -73,30 +78,51 @@ if len(preference_dataset) > 0:
 else:
     print("WARNING: No preference pairs were created. Check the dataset structure.")
 
-# Load model and tokenizer
+# Configure quantization for loading the model
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_use_double_quant=True,
+)
+
+# Load model and tokenizer with quantization
 model_name = "microsoft/phi-2"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name, 
-    torch_dtype=torch.bfloat16,
+    quantization_config=quantization_config,
     device_map="auto"
 )
 
-# Define a reward function that rewards helpful, concise responses
-# and penalizes responses similar to rejected ones
-def reward_func(completions, **kwargs):
-    return [len(c.split()) for c in completions]  # reward by word count
+# Configure LoRA
+peft_config = LoraConfig(
+    r=16,                     # Rank
+    lora_alpha=32,            # Alpha parameter for LoRA scaling
+    lora_dropout=0.05,        # Dropout probability for LoRA layers
+    bias="none",              # Bias type for LoRA
+    task_type="CAUSAL_LM",    # Task type
+    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+)
+
+# Apply LoRA to the model
+model = get_peft_model(model, peft_config)
+model.print_trainable_parameters()  # Print trainable parameters info
 
 # Configure tokenizer for chat format
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "left"
 
+# Define a reward function that rewards helpful, concise responses
+def reward_func(completions, **kwargs):
+    return [len(c.split()) for c in completions]  # reward by word count
+
 # Configure GRPO training
 training_args = GRPOConfig(
-    output_dir="phi2-grpo-openassistant",
-    num_train_epochs=3,
+    output_dir="phi2-grpo-qlora",
+    num_train_epochs=1,                # Reduced from 3 to 1
     per_device_train_batch_size=2,
-    gradient_accumulation_steps=16,
+    gradient_accumulation_steps=4,     # Reduced from 16 to 4
     gradient_checkpointing=True,
     learning_rate=5e-6,
     logging_steps=10,
@@ -107,11 +133,18 @@ training_args = GRPOConfig(
     optim="adamw_torch",
     lr_scheduler_type="cosine",
     warmup_ratio=0.1,
-    num_generations=2,  # Set the desired number of generations per prompt
+    num_generations=2,
+    max_length=256,                    # Added to limit generation length
+    generation_kwargs={                # Added to control generation
+        "max_new_tokens": 128,
+        "pad_token_id": tokenizer.eos_token_id,
+        "do_sample": False,
+    },
+    logging_first_step=True,           # Log first step metrics
+    logging_nan_inf_filter=False,      # Show all warnings
 )
 
-
-# Initialize the GRPO trainer with preference dataset
+# Initialize the GRPO trainer
 trainer = GRPOTrainer(
     model=model,
     args=training_args,
@@ -126,4 +159,4 @@ trainer.tokenizer = tokenizer
 trainer.train()
 
 # Save the final model
-trainer.save_model("phi2-grpo-openassistant-final")
+trainer.save_model("phi2-grpo-qlora-final")
