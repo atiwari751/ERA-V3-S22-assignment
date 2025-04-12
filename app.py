@@ -22,6 +22,7 @@ st.markdown("""
     margin-left: auto;
     margin-right: 10px;
     position: relative;
+    color: #000000;  /* Ensure text is black */
 }
 .assistant-bubble {
     background-color: #f0f0f0;
@@ -31,6 +32,7 @@ st.markdown("""
     max-width: 80%;
     margin-left: 10px;
     position: relative;
+    color: #000000;  /* Ensure text is black */
 }
 .chat-container {
     display: flex;
@@ -47,6 +49,22 @@ st.markdown("""
     border-radius: 20px;
     width: 100%;
 }
+/* Fix for excessive vertical space */
+header {
+    visibility: hidden;
+}
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+h1 {
+    margin-top: 0 !important;
+    margin-bottom: 1rem !important;
+}
+/* Ensure dark mode compatibility */
+.stApp {
+    background-color: #121212;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -57,8 +75,8 @@ if "messages" not in st.session_state:
 if "model_loaded" not in st.session_state:
     st.session_state.model_loaded = False
 
-# App title
-st.title("Phi-2 Fine-tuned Assistant")
+# App title - made smaller to reduce vertical space
+st.markdown("<h2>Phi-2 Fine-tuned Assistant</h2>", unsafe_allow_html=True)
 
 # Load model (only once)
 if not st.session_state.model_loaded:
@@ -83,7 +101,11 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # Chat input
 with st.container():
-    user_input = st.text_input("Your message:", key="user_input", placeholder="Type your message here...")
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        user_input = st.text_input("", key="user_input", placeholder="Type your message here...")
+    with col2:
+        clear_button = st.button("Clear")
     
     # Process input when user submits a message
     if user_input:
@@ -121,7 +143,7 @@ with st.container():
         # Rerun to update the UI
         st.experimental_rerun()
 
-# Add a button to clear the chat
-if st.button("Clear Chat"):
+# Clear chat when button is pressed
+if clear_button:
     st.session_state.messages = []
     st.experimental_rerun()
