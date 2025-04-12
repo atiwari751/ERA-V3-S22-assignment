@@ -1,6 +1,7 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
+import os
 
 def load_model_and_tokenizer():
     """Load the fine-tuned model and tokenizer, ensuring CPU compatibility."""
@@ -9,18 +10,26 @@ def load_model_and_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     tokenizer.pad_token = tokenizer.eos_token
     
-    # Load base model on CPU
+    # Create offload directory if it doesn't exist
+    offload_dir = "offload_dir"
+    os.makedirs(offload_dir, exist_ok=True)
+    
+    # Load base model with 8-bit quantization to reduce memory usage
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
         torch_dtype=torch.float32,  # Use float32 for CPU
-        device_map="auto"
+        device_map="auto",
+        offload_folder=offload_dir,  # Add offload directory
+        load_in_8bit=True,          # Use 8-bit quantization
+        low_cpu_mem_usage=True      # Optimize for low memory
     )
     
     # Load adapter weights
     model = PeftModel.from_pretrained(
         base_model, 
         "phi2-grpo-qlora-final",
-        device_map="auto"
+        device_map="auto",
+        offload_folder=offload_dir  # Add offload directory
     )
     
     # Set to evaluation mode
