@@ -64,3 +64,13 @@ The fine-tuned model shows improved performance in:
 * Maintaining helpful and safe responses
 * Generating coherent and contextually appropriate text
 * Providing more concise and relevant answers compared to the base model
+
+## Sample comparisons 
+
+The following images show sample outputs of the base model and the fine tuned model, where the difference in tone and structure of the answer can be seen. As the model was only trained with 1000 samples, it still has significant room to improve its responses, but the difference already shows a POC. 
+
+### Sample 1
+![Sample 1](comparison 1.png)
+
+### Sample 2
+![Sample 2](comparison 2.png)
