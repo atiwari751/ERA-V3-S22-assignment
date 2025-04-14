@@ -70,7 +70,7 @@ The fine-tuned model shows improved performance in:
 The following images show sample outputs of the base model and the fine tuned model, where the difference in tone and structure of the answer can be seen. As the model was only trained with 1000 samples, it still has significant room to improve its responses, but the difference already shows a POC. 
 
 ### Sample 1
-![Sample 1](comparison 1.png)
+![Sample 1](comparison_1.png)
 
 ### Sample 2
-![Sample 2](comparison 2.png)
+![Sample 2](comparison_2.png)
