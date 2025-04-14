@@ -72,5 +72,9 @@ The following images show sample outputs of the base model and the fine tuned mo
 ### Sample 1
 ![Sample 1](comparison_1.png)
 
+The fine tuned model gives a more structured response here. 
+
 ### Sample 2
 ![Sample 2](comparison_2.png)
+
+The fine tuned model gives a more accurate definition of groove metal, which has nothing to do with melodic elements as seen in the base model's response! 
